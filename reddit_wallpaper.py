@@ -30,9 +30,9 @@
 # CONFIGURATION - Edit this part #
 ##################################
 
-## List of subreddits to pull from. Seperate each with a plus sign
-
-subreddits = "EarthPorn+BotanicalPorn+WaterPorn+SeaPorn+SkyPorn+DesertPorn+LakePorn";
+## Reddit data to grab
+subreddits = "EarthPorn+BotanicalPorn+WaterPorn+SeaPorn+SkyPorn+DesertPorn+LakePorn" # List of subreddits to pull from. Seperate each with a plus sign
+listing = "top/?t=week" #Which way should it sort the subreddit? Top is recommended, but hot, new, or controversial are also options.
 
 
 
@@ -45,9 +45,9 @@ wallpaper_folder = "~/Pictures/Backgrounds" #Folder to download wallpaper to
 
 ## Replace the command with the command you use to set your desktop background, split into each component argument/part. Examples of common commands are included below. Make sure that only ONE instance of "command = " is uncommented. Otherwise, Python will use the bottom-most instance of "command = ".
 
-command = ['feh', '--bg-fill', link_file] 
+# command = ['feh', '--bg-fill', link_file] 
 # GNOME LINUX DE:
-# command = ['gsettings', 'set', 'org.gnome.desktop.background', 'picture-uri', 'file://' + link_file]
+command = ['gsettings', 'set', 'org.gnome.desktop.background', 'picture-uri', 'file://' + link_file]
 # MAC OS X:
 # command = ['osascript', '-e', 'tell application "Finder" to set desktop picture to POSIX file "' + link_file + '"']
           
@@ -93,9 +93,9 @@ subprocess.run(["mkdir", wallpaper_folder], stdout=subprocess.DEVNULL, stderr=su
 
 
 
-print("Fetching listing from http://api.reddit.com/r/" + subreddits + "/top\n")
+print("Fetching listing from http://api.reddit.com/r/" + subreddits + "/" + listing + "\n")
 try:
-    reddit = json.loads(subprocess.run(['curl', '-A', "Mozilla/5.0 (X11; Linux x86_64; rv:74.0) Gecko/20100101 Firefox/74.0", "https://api.reddit.com/r/EarthPorn/top"], stdout=subprocess.PIPE).stdout.decode('utf-8')) #fetch JSON from reddit
+    reddit = json.loads(subprocess.run(['curl', '-A', "Mozilla/5.0 (X11; Linux x86_64; rv:74.0) Gecko/20100101 Firefox/74.0", "https://api.reddit.com/r/" + subreddits + "/" + listing], stdout=subprocess.PIPE).stdout.decode('utf-8')) #fetch JSON from reddit
     #Reddit requires a useragent line so I just used the Firefox user agent. It really doesn't matter what the useragent is as long as it's valid.
 
 except:
@@ -143,7 +143,7 @@ print("\n\nImage found!")
 print("\nNumber " + str(num))
 print(x["data"]["title"])
 print("Width: " + str(image["width"]) + " Height: " + str(image["height"]))
-print("URL: " + url)
+print("URL: " + x["data"]["url"])
 print("\n")
 
 
