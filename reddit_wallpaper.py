@@ -8,7 +8,7 @@
 subreddits = "EarthPorn+BotanicalPorn+WaterPorn+SeaPorn+SkyPorn+DesertPorn+LakePorn"; #Subreddits to pull from. Seperate each with a plus sign.
 link_file = "~/.background" #Where to put link to most recently-fetched wallpaper
 wallpaper_folder = "~/Pictures/Backgrounds" #Folder to download to
-command = ['osascript', '-e', 'tell application "Finder" to set desktop picture to POSIX file "' + link_file + '"'] #Replace this with the command you use to set your desktop background, split into each component argument/part
+command = ['feh', '--bg-fill', link_file] #Replace this with the command you use to set your desktop background, split into each component argument/part
           #GNOME : ['gsettings', 'set', 'org.gnome.desktop.background', 'picture-uri', 'file://' + link_file]
           #Mac : ['osascript', '-e', 'tell application "Finder" to set desktop picture to POSIX file "' + link_file + '"']
 min_width = 1600
@@ -26,10 +26,8 @@ import json
 import sys
 import os
 
-link_file_old = link_file
-link_file = os.path.expanduser(link_file)
 wallpaper_folder = os.path.expanduser(wallpaper_folder)
-command2 = []
+subprocess.run(["mkdir", wallpaper_folder], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 print("Fetching listing from http://api.reddit.com/r/" + subreddits + "/top\n")
 try:
@@ -69,16 +67,17 @@ print("Width: " + str(image["width"]) + " Height: " + str(image["height"]))
 print("URL: " + url)
 print("\n")
 
-subprocess.run(['rm', link_file + '_bak'], stdout=subprocess.PIPE)
-subprocess.run(['mv', link_file, link_file + '_bak'], stdout=subprocess.PIPE)
+subprocess.run(['rm', os.path.expanduser(link_file) + '_bak'], stdout=subprocess.PIPE)
+subprocess.run(['mv', os.path.expanduser(link_file), os.path.expanduser(link_file) + '_bak'], stdout=subprocess.PIPE)
 title = str(x["data"]["url"].split("/")[-1])
 
 subprocess.run(['curl', x["data"]["url"], '-o', wallpaper_folder + "/" + title], stdout=subprocess.PIPE)
-subprocess.run(['ln','-s', wallpaper_folder + "/" + title, link_file], stdout=subprocess.PIPE)
+subprocess.run(['ln','-s', wallpaper_folder + "/" + title, os.path.expanduser(link_file)], stdout=subprocess.PIPE)
 
 
+command2 = []
 for x in command:
-    command2.append(x.replace(link_file_old,wallpaper_folder + "/" + title))
+    command2.append(x.replace(link_file,wallpaper_folder + "/" + title))
 
 
 subprocess.run(command2, stdout=subprocess.PIPE)
