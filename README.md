@@ -1,5 +1,6 @@
 # reddit_wallpaper
 
+![Preview.png](https://raw.githubusercontent.com/jclarsson/reddit_wallpaper/master/Preview.png)
 
 ## Reddit Wallpaper Fetcher
 Usage: python3 reddit_wallpaper.py
