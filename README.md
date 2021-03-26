@@ -1,36 +1,30 @@
 # reddit_wallpaper
 
 
-## Reddit Wallpaper Script
-Usage: ./reddit_wallpaper.py [number of posts to skip]
+## Reddit Wallpaper Fetcher
+Usage: python3 reddit_wallpaper.py
 
-Optional:
-* Enter an integer as an argument to this program if you
-do not want to use the first wallpaper at the top of
-the subreddit for today. This will skip that amount of
-posts and start lower down. Whenever you run this
-program, it will tell you the number assosciated with
-each post. So, if it downloads a picture you aren't
-very fond of, use that picture's number plus one as
-the argument for this script.
-* Otherwise, you may run this script with no arguments
-in order to fetch the top post from today.
+**Dependencies:**
+* Python 3
+* Python requests
+   * Install with pip install requests
+   * Install on Debian, Arch, and Fedora as python-requests
+* Python Gobject
+   * Install on Debian as pygobject
+   * Install on Arch and Fedora as python-gobject
+   * Install on Mac with "brew install pygobject3"
+* GTK 3
+   * Install on Debian as gtk+3.0
+   * Install on Arch and Fedora as gtk3
+   * Install on Mac with "brew install gtk+3 adwaita-icon-theme"
+   
+***
 
-**Required packages:**
-* python3
-* curl
+Stores data in ~/.local/share/reddit_wallpaper
 
+Directory structure:
+* ~/.local/share/reddit_wallpaper
+   * config.json: Stores the configuration saved through the app. It is possible, though NOT recommended, to edit this manually.
+   * Wallpapers: Stores all pictures that you have downloaded and set as your wallpaper through this program. This may, over time, start to take up a lot of space, so you may want to manually delete some of the older pictures after some time.
+   * Thumbnails (temporary): Stores downloaded thumbnails while the program is open. This directory is automatically deleted when the program closes, and should not appear unless it is open.
 
-Most Unix systems (Mac, Linux, BSD) should already have curl, however, you should check to make sure your Python installation is up-to-date.
-
-**Configuration:**
-
-* **subreddits** *string*: List of subreddits to pull from. Seperate each with a plus sign
-
-* **link_file** *string (file name and location)*: This chooses a location to place a symbolic link to your new background.
-* **wallpaper_folder** *string (directory name and location)*: This chooses a location to download the wallpapers to
-
-* **command** *array\<string\>*: The command used to set wallpapers in your OS or DE, broken up into an array. Each entry in the array should represent either the command or its arguments. For example, ["ls", "-a", "~"] would represent "ls -a ~". The file contains examples that you can use for Feh (Wallpaper setter for barebones WMs), GNOME (Desktop environment on Linux), or Mac OS X.
-
-* **min_width** *int*: Minimum width of the image to grab from Reddit. It is recommended to set this to be the same as the width of your largest monitor.
-* **min_height** *int*: Minimum height of the image to grab from Reddit. It is recommended to set this to be the same as the height of your largest monitor.

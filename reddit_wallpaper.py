@@ -1,169 +1,511 @@
 #!/bin/python3
 
-##########################################################
-# Reddit Wallpaper Script                                #
-# Usage: ./reddit_wallpaper.py [number of posts to skip] #
-#                                                        #
-# Optional:                                              #
-# Enter an integer as an argument to this program if you #
-# do not want to use the first wallpaper at the top of   #
-# the subreddit for today. This will skip that amount of #
-# posts and start lower down. Whenever you run this      #
-# program, it will tell you the number assosciated with  #
-# each post. So, if it downloads a picture you aren't    #
-# very fond of, use that picture's number plus one as    #
-# the argument for this script.                          #
-# Otherwise, you may run this script with no arguments   #
-# in order to fetch the top post from today.             #
-#                                                        #
-# Required packages:                                     #
-#  * python3                                             #
-#  * curl                                                #
-##########################################################
+import gi, os, json, threading, time, requests, subprocess, sys
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gio, GLib
 
-# Most Unix systems (Mac, Linux, BSD) should already have curl, however, you should check to make sure your Python installation is up-to-date.
+if "requests" not in sys.modules:
+    print("Error: missing dependency \"requests\". Please run \"pip3 install requests\" to fix this. Some systems may include it in their package manager as python-requests.")
+
+if "gi" not in sys.modules:
+    print("Error: missing dependency \"gi\". Please install pygobject3 and gtk+3 from your package manager.")
+
+if ("gi" not in sys.modules) or ("requests" not in sys.modules):
+    print("Unmet dependencies. Aborting now.")
+    exit()
 
 
+class RedditWallpaperWindow(Gtk.Window):  # Main window
+    storage_directory = os.path.expanduser("~/.local/share/reddit_wallpaper")
+    reddit = []
+    subreddits = None
+    sort = None
+    wallpaper_manager = None
+    min_width = None
+    min_height = None
+
+    def __init__(self):
+        print("Starting Reddit Wallpaper Fetcher")
+
+        # Initiate Gtk.Window
+        Gtk.Window.__init__(self, title="Reddit Wallpaper")
+        self.set_default_size(768, 512)
+        self.set_icon_name("preferences-desktop-wallpaper")
+
+        # Make sure that the storage directory is set up. This folder will contain the config.json, copies of saved/set wallpapers, as well as provide temporary storage for downloaded thumbnails.
+        if not os.path.isdir(self.storage_directory):
+            try:
+                os.makedirs(self.storage_directory)
+                print("Created new storage directory.")
+            except:
+                print("ERROR: Failed to make storage directory.")
+                quit()
+        if not os.path.isdir(self.storage_directory + "/Wallpapers"):
+            try:
+                os.makedirs(self.storage_directory + "/Wallpapers")
+                print("Created new Wallpapers download directory. I would recommend setting up a link to this from within the Pictures folder by running \"ln -s ~/.local/share/reddit_wallpaper/Wallpapers ~/Pictures/Wallpapers\"")
+            except:
+                print("ERROR: Failed to make Wallpaper download directory.")
+                quit()
+        if not os.path.isdir(self.storage_directory + "/Thumbnails"):
+            try:
+                os.makedirs(self.storage_directory + "/Thumbnails")
+                print("Created new Thumbnails directory")
+            except:
+                print("ERROR: Failed to make Thumbnails directory.")
+                quit()
+
+        # Initiate Settings object
+        self.settings = Settings(self.storage_directory, self)
+
+        # Setup left side (Main panel). It's a GtkStack with one container for the progress bar and another for the thumbnails
+        self.left = Gtk.Stack()
+
+        self.stack1 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.stack1.set_border_width(10)
+        self.progressbar = Gtk.ProgressBar()
+        self.progressbar.set_text("Loading...")
+        self.progressbar.set_show_text(True)
+        self.stack1.pack_start(self.progressbar, True, False, 0)
+
+        self.stack2 = Gtk.ScrolledWindow()
+        self.stack2fb = Gtk.FlowBox()
+        self.stack2fb.set_valign(Gtk.Align.START)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.pack_start(Gtk.Label(label="    Select an icon to set your wallpaper", xalign=0), False, False, 10)
+        box.pack_start(self.stack2fb, True, True, 0)
+        self.stack2.add(box)
+
+        self.left.add_named(self.stack1, "a")
+        self.left.add_named(self.stack2, "b")
+        self.left.set_visible_child_name("a")
+
+        # Setup right side. This is the settings panel, and it can hide or show.
+        self.right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.right.set_border_width(10)
+        self.right.set_property("width-request", 256)
+        self.left.set_property("width-request", 512)
+
+        settings_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.srbutton = Gtk.Button.new_with_label("Apply settings and Refresh")
+        self.srbutton.connect("clicked", self.apply_settings, True)
+        self.srbutton.set_sensitive(False)
+        settings_buttons.pack_start(self.srbutton, True, True, 0)
+        button = Gtk.Button()
+        icon = Gio.ThemedIcon(name="document-save-symbolic")
+        image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
+        button.add(image)
+        button.set_tooltip_text("Save settings")
+        button.connect("clicked", self.save_settings)
+        settings_buttons.pack_end(button, True, True, 0)
+        self.right.pack_end(settings_buttons, False, False, 0)
+
+        self.setup_settings()
+
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        hbox.pack_start(self.left, True, True, 0)
+        hbox.pack_end(self.right, False, False, 0)
+        self.add(hbox)
+
+        # Setup header bar
+        hb = Gtk.HeaderBar()
+        hb.set_show_close_button(True)
+        hb.props.title = "Reddit Wallpaper"
+        if sys.platform == "linux" or sys.platform == "linux2":
+            self.set_titlebar(hb)
+
+        self.refreshbutton = Gtk.Button()
+        icon = Gio.ThemedIcon(name="view-refresh-symbolic")
+        image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
+        self.refreshbutton.add(image)
+        self.refreshbutton.set_sensitive(False)
+        self.refreshbutton.connect("clicked", self.refresh)
+        hb.pack_start(self.refreshbutton)
+
+        # button = Gtk.Button()
+        # icon = Gio.ThemedIcon(name="open-menu-symbolic")
+        # image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
+        # button.add(image)
+        # hb.pack_end(button)
+
+        button = Gtk.ToggleButton()
+        icon = Gio.ThemedIcon(name="preferences-system-symbolic")
+        image = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.BUTTON)
+        button.add(image)
+        button.connect("clicked", self.on_settings_click)
+        button.set_active(True)
+        hb.pack_end(button)
+
+        self.show_all()
+
+        t1 = threading.Thread(target=self.load)
+        t1.start()
+
+    def save_settings(self, sender):
+        self.apply_settings(sender, False)
+        self.settings.save()
+
+    def set_progress(self, fraction, title):
+        self.progressbar.set_fraction(fraction)
+        self.progressbar.set_text(title)
+
+    def finish_load(self):
+        self.left.show_all()
+        self.left.set_visible_child_name("b")
+        self.refreshbutton.set_sensitive(True)
+        self.srbutton.set_sensitive(True)
+
+    def refresh(self, sender):
+
+        self.refreshbutton.set_sensitive(False)
+        self.srbutton.set_sensitive(False)
+        self.left.set_visible_child_name("a")
+        for i in self.stack2fb.get_children():
+            self.stack2fb.remove(i)
+        t1 = threading.Thread(target=self.load)
+        t1.start()
+
+    def load(self):
+        GLib.idle_add(self.set_progress, 0.05, "Fetching listing from Reddit")
+
+        try:
+            if "?" in self.settings.get("sort"):
+                max_listings = "&"
+            else:
+                max_listings = "/?"
+            self.reddit = json.loads(requests.get("https://api.reddit.com/r/" + self.settings.get("subreddits") + "/" + self.settings.get("sort") + max_listings + "limit=50", headers={'User-agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:86.0) Gecko/20100101 Firefox/86.0'}).content)
+
+        except:
+            GLib.idle_add(self.set_progress, 0, "Failed to load Reddit. Please check your internet connection and try again.")
+            return
+
+        GLib.idle_add(self.set_progress, 0.25, "Searching for all matching images")
+
+        images = []
+
+        for index, x in enumerate(self.reddit["data"]["children"]):
+
+            image = x["data"]["preview"]["images"][0]["source"]  # this contains metadata about the image
+
+            if int(image["width"]) >= int(self.settings.get("min_width")) and int(image["height"]) >= int(self.settings.get("min_height")):  # and image["height"] <= image["width"]):
+                images.append(index)
+
+        GLib.idle_add(self.set_progress, 0.5, "Downloading thumbnails...")
+        length = len(images)
+        curr_len = 0.5
+        for num in images:
+            GLib.idle_add(self.set_progress, curr_len, "Downloading thumbnails... (" + str(int(((curr_len - 0.5) / 0.5) * length) + 1) + " of " + str(length) + ")")
+            with open(self.storage_directory + "/Thumbnails/thumb_" + str(num), 'wb') as f:
+                f.write(requests.get(self.reddit["data"]["children"][num]["data"]["thumbnail"]).content)
+        
+            GLib.idle_add(self.preview_new, num)
+            curr_len += 0.5/length
+        GLib.idle_add(self.finish_load)
+
+    def preview_new(self, num):
+
+        button = Gtk.Button()
+
+        image = Gtk.Image().new_from_file(self.storage_directory + "/Thumbnails/thumb_" + str(num))
+
+        button.add(image)
+
+        button.connect("clicked", self.set_wallpaper, num)
+        button.set_tooltip_text(self.reddit["data"]["children"][num]["data"]["title"])
+
+        self.stack2fb.add(button)
+
+    def set_wallpaper(self, button, num):
+        self.left.set_visible_child_name("a")
+        t1 = threading.Thread(target=self.do_set_wallpaper, args=[self, button, num])
+        t1.start()
+
+    def do_set_wallpaper(self, sender, button, num):
+        GLib.idle_add(self.set_progress, 0, "Setting wallpaper")
+        GLib.idle_add(self.set_progress, 0.05, "Downloading image from Reddit...")
+        x = self.reddit["data"]["children"][num]
+
+        title = str(x["data"]["url"].split("/")[-1])
+
+        with open(self.storage_directory + "/Wallpapers/" + title, 'wb') as f:
+            f.write(requests.get(x["data"]["url"]).content)
+        GLib.idle_add(self.set_progress, 0.5, "Adding source to EXIF data (If exiftool is installed)")
+
+        try:
+            subprocess.run(['/usr/bin/vendor_perl/exiftool', '-overwrite_original', '-userComment="https://www.reddit.com' + x["data"]["permalink"] + '"', self.storage_directory + "/Wallpapers/" + title], stdout=subprocess.PIPE)
+
+        except:
+            print("Couldn't edit exif data")
+
+        GLib.idle_add(self.set_progress, 0.8, "Setting wallpaper")
+        if self.settings.get("wallpaper_manager") == "GNOME":
+            subprocess.run(['gsettings', 'set', 'org.gnome.desktop.background', 'picture-uri', 'file://' + self.storage_directory + "/Wallpapers/" + title])
+        elif self.settings.get("wallpaper_manager") == "KDE":
+            subprocess.run(['dbus-send', '--session', '--dest=org.kde.plasmashell', '--type=method_call', '/PlasmaShell', 'org.kde.PlasmaShell.evaluateScript',"string: \n\
+var Desktops = desktops(); \n\
+for (i=0;i<Desktops.length;i++) { \n\
+        d = Desktops[i]; \n\
+        d.wallpaperPlugin = \"org.kde.image\"; \n\
+        d.currentConfigGroup = Array(\"Wallpaper\", \n\
+                                    \"org.kde.image\", \n\
+                                    \"General\"); \n\
+        d.writeConfig(\"Image\", \"file://" + self.storage_directory + "/Wallpapers/" + title + "\"); \n\
+}"])
+            subprocess.run(['kwriteconfig5', '--file', 'kscreenlockerrc', '--group', 'Greeter', '--group', 'Wallpaper', '--group', 'org.kde.image', '--group', 'General', '--key', 'Image', 'file://' + self.storage_directory + "/Wallpapers/" + title])
+        elif self.settings.get("wallpaper_manager") == "feh":
+            subprocess.run(['feh', '--bg-fill', self.storage_directory + "/Wallpapers/" + title])
+        elif self.settings.get("wallpaper_manager") == "Mac OS":
+            subprocess.run(['osascript', '-e', 'tell application "Finder" to set desktop picture to POSIX file "' + self.storage_directory + "/Wallpapers/" + title + '"'])
+        else:
+            command = self.settings.get("wallpaper_manager")
+            command = command.replace("$wallpaper", self.storage_directory + "/Wallpapers/" + title)
+            subprocess.run(["bash", "-c", command])
+
+        time.sleep(0.25)
+        GLib.idle_add(self.finish_load)
+
+    def setup_settings(self):
+        label = Gtk.Label()
+        label.set_markup("<big><b>Settings</b></big>")
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("<b>Subreddits</b>")
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+#         self.subreddits = Gtk.ListBox()
+        # self.subreddits.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        # for i in self.settings.get("subreddits").split("+"):
+        #     row = Gtk.ListBoxRow()
+        #     row.add(Gtk.Label(label=i))
+        #     self.subreddits.add(row)
+        # self.subreddits.unselect_all()
+        self.subreddits = Gtk.Entry()
+        self.subreddits.set_text(self.settings.get("subreddits"))
+
+        self.right.pack_start(self.subreddits, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("List of subreddits separated by a Plus (+) sign")
+        label.set_xalign(0)
+        label.set_line_wrap(True)
+        label.set_justify(Gtk.Justification.LEFT)
+        self.right.pack_start(label, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("<b>Sort</b>")
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+        self.sort = Gtk.ComboBoxText()
+
+        for index, i in enumerate(self.settings.sort_types):
+            self.sort.append_text(i)
+            if i == self.settings.get("sort"):
+                self.sort.set_active(index)
+        self.right.pack_start(self.sort, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("How should Reddit sort the entries. Recommended: top/?t=week")
+        label.set_line_wrap(True)
+        label.set_justify(Gtk.Justification.LEFT)
+        label.set_max_width_chars(34)
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("<b>Wallpaper Manager</b>")
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+        self.wallpaper_manager = Gtk.Entry()
+        self.wallpaper_manager.set_text(self.settings.get("wallpaper_manager"))
+
+        self.right.pack_start(self.wallpaper_manager, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("Supported values are: GNOME, KDE, Mac OS, feh, or a custom command with $wallpaper which will be filled in to be the location of the downloaded wallpaper.")
+        label.set_line_wrap(True)
+        label.set_max_width_chars(34)
+        label.set_justify(Gtk.Justification.LEFT)
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("<b>Minimum Width</b>")
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+        self.min_width = Gtk.Entry()
+        self.min_width.set_text(self.settings.get("min_width"))
+
+        self.right.pack_start(self.min_width, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("Minimum width of image to search for, must be a positive integer.")
+        label.set_line_wrap(True)
+        label.set_justify(Gtk.Justification.LEFT)
+        label.set_xalign(0)
+        label.set_max_width_chars(34)
+        self.right.pack_start(label, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("<b>Minimum Height</b>")
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+        self.min_height = Gtk.Entry()
+        self.min_height.set_text(self.settings.get("min_height"))
+
+        self.right.pack_start(self.min_height, False, False, 0)
+
+        label = Gtk.Label()
+        label.set_markup("Minimum height of image to search for, must be a positive integer.")
+        label.set_line_wrap(True)
+        label.set_justify(Gtk.Justification.LEFT)
+        label.set_max_width_chars(34)
+        label.set_xalign(0)
+        self.right.pack_start(label, False, False, 0)
+
+    def apply_settings(self, sender, refresh):
+        returnvalues = list()
+        returnvalues.append(self.settings.set("subreddits", self.subreddits.get_text()))
+        returnvalues.append(self.settings.set("sort", self.sort.get_active_text()))
+        returnvalues.append(self.settings.set("wallpaper_manager", self.wallpaper_manager.get_text()))
+        returnvalues.append(self.settings.set("min_width", self.min_width.get_text()))
+        returnvalues.append(self.settings.set("min_height", self.min_height.get_text()))
+        
+        if refresh is True and (not (False in returnvalues)):
+            self.refresh(sender)
+
+    def on_settings_click(self, sender):
+        if sender.get_active():
+            self.right.show_all()
+        else:
+            self.right.hide()
+
+    def on_close(self, args):
+        with os.scandir(self.storage_directory + "/Thumbnails") as it:
+            for entry in it:
+                if entry.name.startswith('thumb_') and entry.is_file():
+                    os.remove(self.storage_directory + "/Thumbnails/" + entry.name)
+        os.rmdir(self.storage_directory + "/Thumbnails")
+        print("Erased all thumbnails")
+        self.save_settings(args)
+
+        Gtk.main_quit()
 
 
-##################################
-# CONFIGURATION - Edit this part #
-##################################
+class Settings:  # Settings object
 
-## Reddit data to grab
-subreddits = "EarthPorn+BotanicalPorn+WaterPorn+SeaPorn+SkyPorn+DesertPorn+LakePorn" # List of subreddits to pull from. Seperate each with a plus sign
-listing = "top/?t=week" #Which way should it sort the subreddit? Top is recommended, but hot, new, or controversial are also options.
+    # Global variables used:
+    #   default_json (string): Stores the default settings, used for creating new config.json, verifying the keys of config.json, and resetting config.json back to default.
+    #   location (string): Storage location, typically ~/.local/share/reddit_wallpaper
+    #   config_file (string): Full path of config.json
+    #   settings (dictionary): Array containing all keys and values stored in settings
+    #   default_settings (JSON Object): Default settings loaded from default_json string
 
+    default_json = '{"subreddits": "EarthPorn+BotanicalPorn+WaterPorn+SeaPorn+SkyPorn+DesertPorn+LakePorn", "sort": "top/?t=week", "wallpaper_manager": "GNOME", "min_width": "1920", "min_height": "1080"}'
+    settings = {}
+    sort_types = ("hot", "new", "top/?t=hour", "top/?t=day", "top/?t=week", "top/?t=month", "top/?t=year", "top/?t=all", "random")
 
+    def __init__(self, location, window):
+        self.window = window
+        self.location = location
+        self.config_file = location + "/config.json"
+        self.defualt_settings = json.loads(self.default_json)
 
-## Locations
+        # Load default settings, and then replace them with all valid settings previously saved
+        self.load(json.loads(self.default_json))
+        try:
+            with open(self.config_file) as f:
+                self.load(json.load(f))
+            print("Loaded existing settings file at " + self.config_file)
 
-link_file = "~/.background" #Where to put link to most recently-fetched wallpaper
-wallpaper_folder = "~/Pictures/Backgrounds" #Folder to download wallpaper to
+        except:
+            print("config.json does not exist or is unreadable, loading default settings.")
 
+    def load(self, jsondict):  # Iterates through the JSON data and runs it through self.set() in order to verify that the value is valid
+        for i in jsondict:
+            self.set(i, jsondict[i])
 
+    def set(self, key, value):  # Verify the input and then set the key
+        settings = self.settings
+        if key == "subreddits":
+            settings[key] = value
+        elif key == "sort":
+            if value in self.sort_types:
+                settings[key] = value
+            else:
+                self.throw_error("Invalid value for key \"sort\".")
+                return False
+        elif key == "wallpaper_manager":
+            if value in ("GNOME", "KDE", "feh", "Mac OS"):
+                settings[key] = value
+            elif '$wallpaper' in value:
+                settings[key] = value
+            else:
+                self.throw_error("Invalid value for key \"wallpaper_manager\". Must be either GNOME, KDE, Feh, Mac OS, or a custom command using \"$wallpaper\" to replace the command's argument.")
+                return False
+        elif key == "min_width":
+            try:
+                if int(value) > 0:
+                    settings[key] = value
+                else:
+                    self.throw_error("Invalid value for key \"min_width\". Value must be an integer above 0.")
+                    return False
+            except:
+                self.throw_error("Invalid value for key \"min_width\". Value must be an integer above 0.")
+                return False
 
-## Replace the command with the command you use to set your desktop background, split into each component argument/part. Examples of common commands are included below. Make sure that only ONE instance of "command = " is uncommented. Otherwise, Python will use the bottom-most instance of "command = ".
+        elif key == "min_height":
+            try:
+                if int(value) > 0:
+                    settings[key] = value
+                else:
+                    self.throw_error("Invalid value for key \"min_height\". Value must be an integer above 0.")
+                    return False
+            except:
+                self.throw_error("Invalid value for key \"min_height\". Value must be an integer above 0.")
+                return False
+        else:
+            self.throw_error("Error: Invalid key.")
+            return False
+        self.settings = settings
+        return True
 
-# command = ['feh', '--bg-fill', link_file] 
-# GNOME LINUX DE:
-command = ['gsettings', 'set', 'org.gnome.desktop.background', 'picture-uri', 'file://' + link_file]
-# MAC OS X:
-# command = ['osascript', '-e', 'tell application "Finder" to set desktop picture to POSIX file "' + link_file + '"']
-          
+    def get(self, key):
+        return self.settings[key]
 
+    def save(self):
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.settings, f)
+            print("Saved settings to " + self.config_file)
 
-#Minimum widths of images to fetch. It is recommended to set this to your display resolution so that it doesn't fetch any small, pixellated images, but you can set these to 0 to fetch images of any size.
+        except:
+            self.throw_error("Cannot save settings to config.json. This is bad!")
 
-min_width = 1600   #Should probably be the width of your display
-min_height = 900   #Should probably be the height of your display
+    def throw_error(self, error):  # Prints error to stdout and also show a dialog
+        print(error)
 
+        dialog = Gtk.MessageDialog(
+            transient_for=self.window,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Error in settings",
+        )
+        dialog.format_secondary_text(
+            "Error: " + error
+        )
+        dialog.run()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-###############################################
-# THE REST OF THIS DOES NOT NEED TO BE EDITED #
-#     ----------------------------------      #
-# If you encounter a problem, you should feel #
-# free to edit the code below. However, this  #
-# script is provided on an "As-is" basis      #
-# without warranties or conditions of any     #
-# kind, either express or implied.            #
-###############################################
-
-import subprocess
-import json
-import sys
-import os
-
-
-wallpaper_folder = os.path.expanduser(wallpaper_folder) #subprocess doesn't like the "~" symbol, so this expands it to the full path
-subprocess.run(["mkdir", wallpaper_folder], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT) #make the wallpaper directory if it doesn't already exist
-
-
-
-print("Fetching listing from http://api.reddit.com/r/" + subreddits + "/" + listing + "\n")
-try:
-    reddit = json.loads(subprocess.run(['curl', '-A', "Mozilla/5.0 (X11; Linux x86_64; rv:74.0) Gecko/20100101 Firefox/74.0", "https://api.reddit.com/r/" + subreddits + "/" + listing], stdout=subprocess.PIPE).stdout.decode('utf-8')) #fetch JSON from reddit
-    #Reddit requires a useragent line so I just used the Firefox user agent. It really doesn't matter what the useragent is as long as it's valid.
-
-except:
-    print("\n\n\nFailed to load Reddit. Please check your internet connection and try again.")
-    sys.exit(0) #Exit the program if it can't load the JSON from Reddit for whatever reason
-
-
-
-print("\n\nSearching for image with height of at least " + str(min_height) + " and width of at least " + str(min_width) + "\n")
-
-#If an integer is provided as a command line argument, skip that amount of posts. Otherwise, start from zero.
-try:
-    startAt = int(sys.argv[1])
-except:
-    startAt = 0
-
-num = -1 #keeps track of the post number
-
-#cycle through the posts until it either finds the first valid post, or until it runs out of posts
-for x in reddit["data"]["children"]:
-    num = num + 1 #increment post number
-    if(startAt > 0):
-        startAt = startAt-1
-        continue  #skips the rest of the code below until the right amount of posts have been skipped
-
-    image = x["data"]["preview"]["images"][0]["source"] #this contains metadata about the image
-
-    if(int(image["width"]) >= min_width and int(image["height"]) >= min_height and image["height"] <= image["width"]):
-        break          #end the loop if the right image has been found
-    else:
-        image = None   #otherwise, clear the variable storing metadata and run the loop again
-
-
-#checks to see if the for loop above ended with a valid image, exits the program if it didn't
-try:
-    url = str(image["url"])
-except:
-    print("\n\n\nFailed to find image of the specified size. Please try again later.")
-    sys.exit(0) 
+        dialog.destroy()
 
 
-
-#Print some data about the image
-print("\n\nImage found!")
-print("\nNumber " + str(num))
-print(x["data"]["title"])
-print("Width: " + str(image["width"]) + " Height: " + str(image["height"]))
-print("URL: " + x["data"]["url"])
-print("\n")
-
-
-#these two lines remove the previous instance of ~/.background_bak and then renames the current ~/.background to ~/.background_bak. ~/.background_bak keeps track of the previously-fetched background to make it easy to rollback this script.
-subprocess.run(['rm', os.path.expanduser(link_file) + '_bak'], stdout=subprocess.PIPE)
-subprocess.run(['mv', os.path.expanduser(link_file), os.path.expanduser(link_file) + '_bak'], stdout=subprocess.PIPE)
-
-
-title = str(x["data"]["url"].split("/")[-1]) #the name of the image and its file extension
-
-subprocess.run(['curl', x["data"]["url"], '-o', wallpaper_folder + "/" + title], stdout=subprocess.PIPE)           #downloads the image to the backgrounds folder
-subprocess.run(['ln','-s', wallpaper_folder + "/" + title, os.path.expanduser(link_file)], stdout=subprocess.PIPE) #makes a symbolic link ~/.background which points to the downloaded image
-
-
-#the following is expands the symlink to its pointed-to location in order to set the desktop wallpaper. I would typically want to just set it to ~/.background instead of expanding the symlink, but Mac OS does not like setting the desktop wallpaper to a symlink.
-command2 = []
-for x in command:
-    command2.append(x.replace(link_file,wallpaper_folder + "/" + title))
-
-
-
-#this runs the command that sets your desktop to the new image. If you don't want the program to do this, you can just comment this line out and it will download without setting the wallpaper.
-subprocess.run(command2, stdout=subprocess.PIPE)
+win = RedditWallpaperWindow()
+win.connect("destroy", win.on_close)
+Gtk.main()
