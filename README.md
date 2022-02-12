@@ -18,6 +18,9 @@ Usage: python3 reddit_wallpaper.py
    * Install on Debian as gtk+3.0
    * Install on Arch and Fedora as gtk3
    * Install on Mac with "brew install gtk+3 adwaita-icon-theme"
+* Optional: Exiftool
+   * Install on Debian as libimage-exiftool-perl
+   * Install on Arch as perl-image-exiftool
    
 ***
 
