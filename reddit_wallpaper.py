@@ -326,10 +326,13 @@ class RedditWallpaperWindow(Gtk.Window):  # Main window
         GLib.idle_add(self.set_progress, 0.5, "Adding source to EXIF data (If exiftool is installed)")
 
         try:
-            subprocess.run(['/usr/bin/vendor_perl/exiftool', '-overwrite_original', '-userComment="https://www.reddit.com' + x["data"]["permalink"] + '"', self.storage_directory + "/Wallpapers/" + title], stdout=subprocess.PIPE)
+            subprocess.run(['exiftool', '-overwrite_original', '-userComment="https://www.reddit.com' + x["data"]["permalink"] + '"', self.storage_directory + "/Wallpapers/" + title], stdout=subprocess.PIPE)
 
         except:
-            print("Couldn't edit exif data")
+            try:
+                subprocess.run(['/usr/bin/vendor_perl/exiftool', '-overwrite_original', '-userComment="https://www.reddit.com' + x["data"]["permalink"] + '"', self.storage_directory + "/Wallpapers/" + title], stdout=subprocess.PIPE)
+            except:
+                print("Couldn't edit exif data")
 
         GLib.idle_add(self.set_progress, 0.8, "Setting wallpaper")
         self.run_wallpaper_manager(title)
