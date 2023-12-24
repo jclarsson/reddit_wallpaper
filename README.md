@@ -10,6 +10,7 @@ Usage: python3 reddit_wallpaper.py
 * Python requests
    * Install with pip install requests
    * Install on Debian, Arch, and Fedora as python-requests
+   * Install on Mac with "brew install python-requests"
 * Python Gobject
    * Install on Debian as pygobject
    * Install on Arch and Fedora as python-gobject
@@ -21,6 +22,7 @@ Usage: python3 reddit_wallpaper.py
 * Optional: Exiftool
    * Install on Debian as libimage-exiftool-perl
    * Install on Arch as perl-image-exiftool
+   * Install on Mac with "brew install exiftool"
    
 ***
 
